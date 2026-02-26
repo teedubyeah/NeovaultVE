@@ -1,0 +1,47 @@
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: neovisionve-api
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - DB_PATH=/app/data/neovisionve.db
+      - JWT_SECRET=${JWT_SECRET:-change-this-to-a-long-random-secret-in-production}
+      - ENCRYPTION_PEPPER=${ENCRYPTION_PEPPER:-change-this-pepper-in-production}
+    volumes:
+      - neovisionve-data:/app/data
+    networks:
+      - neovisionve-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3001/api/health"]
+      interval: 8s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        - VITE_API_URL=/api
+    container_name: neovisionve-ui
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-8080}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - neovisionve-network
+
+volumes:
+  neovisionve-data:
+    driver: local
+
+networks:
+  neovisionve-network:
+    driver: bridge
