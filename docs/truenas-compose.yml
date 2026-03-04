@@ -1,0 +1,68 @@
+# NeovisionVE — TrueNAS SCALE self-contained Docker Compose
+#
+# Paste this file into the TrueNAS Custom App compose editor.
+# Docker will clone the source code from GitHub automatically.
+# No SSH, no downloads, no local files required.
+#
+# BEFORE DEPLOYING — replace the two placeholder values:
+#   JWT_SECRET        → output of: openssl rand -hex 64
+#   ENCRYPTION_PEPPER → output of: openssl rand -hex 64
+#
+# Generate both secrets in the TrueNAS Shell (System → Shell):
+#   openssl rand -hex 64
+
+services:
+  backend:
+    build:
+      # Docker clones this repo directly — no local files needed
+      context: https://github.com/teedubyeah/NeovaultVE.git#main:backend
+      dockerfile: Dockerfile
+    container_name: neovisionve-api
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - DB_PATH=/app/data/neovisionve.db
+      # ─── REQUIRED: replace both values before deploying ───────────────
+      - JWT_SECRET=REPLACE_WITH_64_CHAR_HEX
+      - ENCRYPTION_PEPPER=REPLACE_WITH_64_CHAR_HEX
+      # ──────────────────────────────────────────────────────────────────
+      - APP_URL=http://YOUR_TRUENAS_IP:8080
+      # Optional SMTP — configure in Admin → Email after first login
+      - SMTP_HOST=
+      - SMTP_PORT=587
+      - SMTP_SECURE=false
+      - SMTP_USER=
+      - SMTP_PASS=
+      - SMTP_FROM=NeovisionVE <no-reply@yourdomain.com>
+    volumes:
+      # Maps to your TrueNAS dataset — change path to match your pool
+      - /mnt/tank/apps/neovisionve/data:/app/data
+    networks:
+      - neovisionve-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3001/api/health"]
+      interval: 8s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  frontend:
+    build:
+      context: https://github.com/teedubyeah/NeovaultVE.git#main:frontend
+      dockerfile: Dockerfile
+      args:
+        - VITE_API_URL=/api
+    container_name: neovisionve-ui
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - neovisionve-network
+
+networks:
+  neovisionve-network:
+    driver: bridge
