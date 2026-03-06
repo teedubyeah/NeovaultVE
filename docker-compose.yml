@@ -9,8 +9,15 @@ services:
       - NODE_ENV=production
       - PORT=3001
       - DB_PATH=/app/data/neovisionve.db
-      - JWT_SECRET=${JWT_SECRET:-change-this-to-a-long-random-secret-in-production}
-      - ENCRYPTION_PEPPER=${ENCRYPTION_PEPPER:-change-this-pepper-in-production}
+      - JWT_SECRET=${JWT_SECRET}
+      - ENCRYPTION_PEPPER=${ENCRYPTION_PEPPER}
+      - APP_URL=${APP_URL:-http://localhost:8080}
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_SECURE=${SMTP_SECURE:-false}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASS=${SMTP_PASS:-}
+      - SMTP_FROM=${SMTP_FROM:-NeovisionVE <no-reply@neovisionve.local>}
     volumes:
       - neovisionve-data:/app/data
     networks:
@@ -20,7 +27,7 @@ services:
       interval: 8s
       timeout: 5s
       retries: 10
-      start_period: 20s
+      start_period: 30s
 
   frontend:
     build:

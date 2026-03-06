@@ -1,52 +1,56 @@
-const jwt    = require('jsonwebtoken');
-const { getDb }    = require('../models/db');
+const jwt       = require('jsonwebtoken');
+const { getDb }     = require('../models/db');
 const { deriveKey } = require('../utils/crypto');
 
-const JWT_SECRET = process.env.JWT_SECRET;
-
 // ── Startup guard ─────────────────────────────────────────────────────────────
-// Refuse to start if critical secrets are missing or still set to known-weak defaults.
-// This prevents silent operation with insecure credentials.
+// Refuse to start if critical secrets are missing or weak.
+// Uses a short delay before exit so Docker captures the log message.
 const WEAK_JWT_VALUES = [
   'change-this-secret',
   'change-this-to-a-long-random-secret-in-production',
   '',
   undefined,
+  null,
 ];
 const WEAK_PEPPER_VALUES = [
   'default-pepper-change-in-production',
   'change-this-pepper-in-production',
   '',
   undefined,
+  null,
 ];
 
+function fatalConfig(msg) {
+  console.error('\n' + '='.repeat(60));
+  console.error('  NEOVISIONVE STARTUP FAILED');
+  console.error('='.repeat(60));
+  console.error('\n  ' + msg);
+  console.error('\n  Fix: generate secrets with:');
+  console.error('    openssl rand -hex 64   # paste as JWT_SECRET');
+  console.error('    openssl rand -hex 64   # paste as ENCRYPTION_PEPPER');
+  console.error('\n  Then add them to your .env file and restart.\n');
+  console.error('='.repeat(60) + '\n');
+  // Short delay so Docker log driver flushes before the process dies
+  setTimeout(() => process.exit(1), 500);
+}
+
+const JWT_SECRET       = process.env.JWT_SECRET;
+const ENCRYPTION_PEPPER = process.env.ENCRYPTION_PEPPER;
+
 if (WEAK_JWT_VALUES.includes(JWT_SECRET)) {
-  console.error('\n\u274C FATAL: JWT_SECRET is not set or is a known weak default.');
-  console.error('   Generate one with: openssl rand -hex 64');
-  console.error('   Then set it in your .env file as JWT_SECRET=<value>\n');
-  process.exit(1);
-}
-
-if (WEAK_PEPPER_VALUES.includes(process.env.ENCRYPTION_PEPPER)) {
-  console.error('\n\u274C FATAL: ENCRYPTION_PEPPER is not set or is a known weak default.');
-  console.error('   Generate one with: openssl rand -hex 64');
-  console.error('   Then set it in your .env file as ENCRYPTION_PEPPER=<value>\n');
-  process.exit(1);
-}
-
-if (JWT_SECRET.length < 32) {
-  console.error('\n\u274C FATAL: JWT_SECRET is too short (minimum 32 characters).');
-  console.error('   Generate one with: openssl rand -hex 64\n');
-  process.exit(1);
+  fatalConfig('JWT_SECRET is missing or is a known weak placeholder value.');
+} else if (WEAK_PEPPER_VALUES.includes(ENCRYPTION_PEPPER)) {
+  fatalConfig('ENCRYPTION_PEPPER is missing or is a known weak placeholder value.');
+} else if (JWT_SECRET.length < 32) {
+  fatalConfig('JWT_SECRET is too short — minimum 32 characters required.');
 }
 
 // ── Token signing ─────────────────────────────────────────────────────────────
 function signToken(userId) {
-  return jwt.sign({ sub: userId }, JWT_SECRET, { expiresIn: '7d', algorithm: 'HS256' });
+  return jwt.sign({ sub: JWT_SECRET ? userId : null }, JWT_SECRET, { expiresIn: '7d', algorithm: 'HS256' });
 }
 
 // ── requireAuth ───────────────────────────────────────────────────────────────
-// Validates the Bearer JWT, confirms the user is active, attaches req.user.
 function requireAuth(req, res, next) {
   const header = req.headers.authorization;
   if (!header || !header.startsWith('Bearer '))
@@ -75,8 +79,6 @@ function requireAdmin(req, res, next) {
 }
 
 // ── requireAuthWithKey ────────────────────────────────────────────────────────
-// Extends requireAuth by also deriving the per-user encryption key from
-// the X-Password header. Never stored — derived fresh per request.
 function requireAuthWithKey(req, res, next) {
   requireAuth(req, res, () => {
     const password = req.headers['x-password'];

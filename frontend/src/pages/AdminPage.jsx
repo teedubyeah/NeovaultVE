@@ -454,7 +454,7 @@ export default function AdminPage() {
         fontSize: 11, color: 'var(--text3)', letterSpacing: '0.5px',
         borderTop: '1px solid var(--border)', marginTop: 8,
       }}>
-        NeovisionVE <span style={{ color: 'var(--border2)' }}>·</span> v0.15
+        NeovisionVE <span style={{ color: 'var(--border2)' }}>·</span> v0.21
       </div>
     </div>
   )

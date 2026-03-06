@@ -7,12 +7,81 @@
  *   'anonymous' — app relay via env-var SMTP_HOST (shared no-reply address)
  *                 WARNING: may be marked as spam by recipient mail servers
  *   'custom'    — admin-supplied SMTP credentials (recommended)
+ *
+ * Security hardening (defence-in-depth against nodemailer CVEs):
+ *   All email addresses are validated by validateEmailAddress() before being
+ *   passed to nodemailer. This blocks two known vulnerabilities regardless of
+ *   the nodemailer version installed:
+ *
+ *   CVE-1 — DoS via nested group syntax (addressparser infinite recursion)
+ *     Attack: "g0: g1: g2: ... gN: victim@example.com;"
+ *     Fix:    Reject any address containing ':' or ';' characters, which are
+ *             the group-syntax tokens that trigger the recursive parser path.
+ *
+ *   CVE-2 — Email misrouting via quoted local-part containing '@'
+ *     Attack: '"attacker@gmail.com x"@internal.domain' is sent to gmail.com
+ *     Fix:    Reject any address whose local-part (before the final '@') itself
+ *             contains an '@', whether quoted or not.
  */
 
 const nodemailer = require('nodemailer');
 const { getDb } = require('../models/db');
 
 const APP_URL = (process.env.APP_URL || 'http://localhost:8080').replace(/\/$/, '');
+
+// ── Email address validation ──────────────────────────────────────────────────
+//
+// Validates a single email address string and throws a descriptive Error if it
+// fails. Applied to every address before it reaches nodemailer's parser.
+//
+// Rules enforced:
+//   1. Must be a non-empty string
+//   2. Must not contain ':' or ';'  — blocks CVE-1 (group DoS)
+//   3. Must contain exactly one '@' at the top level (outside any quotes)
+//   4. The local-part must not itself contain '@' — blocks CVE-2 (misrouting)
+//   5. Domain must contain at least one '.' and no whitespace
+//   6. Overall length <= 254 characters (RFC 5321)
+//
+function validateEmailAddress(address) {
+  if (typeof address !== 'string' || !address.trim()) {
+    throw new Error('Email address must be a non-empty string');
+  }
+
+  const addr = address.trim();
+
+  if (addr.length > 254) {
+    throw new Error(`Email address too long (max 254 characters): ${addr}`);
+  }
+
+  // CVE-1: block group-syntax characters that trigger infinite recursion in
+  // nodemailer's addressparser when nested groups are present.
+  if (addr.includes(':') || addr.includes(';')) {
+    throw new Error(`Email address contains illegal characters (':' or ';'): ${addr}`);
+  }
+
+  // Find the last '@' — the split point between local-part and domain.
+  const atIndex = addr.lastIndexOf('@');
+  if (atIndex < 1) {
+    throw new Error(`Email address missing '@': ${addr}`);
+  }
+
+  const localPart = addr.slice(0, atIndex);
+  const domain    = addr.slice(atIndex + 1);
+
+  // CVE-2: the local-part must not contain another '@', even inside quotes.
+  // RFC 5321 does not permit '@' in a quoted local-part when used as a
+  // routable address — and nodemailer's parser misroutes such addresses.
+  if (localPart.includes('@')) {
+    throw new Error(`Email local-part contains embedded '@' (possible misrouting attack): ${addr}`);
+  }
+
+  // Domain must have at least one dot and no whitespace.
+  if (!domain.includes('.') || /\s/.test(domain)) {
+    throw new Error(`Email address has invalid domain: ${addr}`);
+  }
+
+  return addr; // normalised, trimmed address
+}
 
 function loadSmtpConfig() {
   try {
@@ -112,13 +181,16 @@ function buildInviteEmail({ fromUsername, itemType, itemTitle, token, message })
 }
 
 async function sendShareInvite({ toEmail, fromUsername, fromEmail, itemType, itemTitle, token, message }) {
+  // Validate before touching nodemailer — blocks both CVEs at our layer
+  const safeToEmail = validateEmailAddress(toEmail);
+
   const cfg         = loadSmtpConfig();
   const transporter = buildTransporter(cfg);
   const { text, html, link, typeLabel } = buildInviteEmail({ fromUsername, itemType, itemTitle, token, message });
   const subject = fromUsername + ' shared a ' + typeLabel + ' with you \u2014 NeovisionVE';
 
   if (!transporter) {
-    logToConsole({ to: toEmail, subject, link });
+    logToConsole({ to: safeToEmail, subject, link });
     return { delivered: false, mode: 'console' };
   }
 
@@ -129,20 +201,23 @@ async function sendShareInvite({ toEmail, fromUsername, fromEmail, itemType, ite
     from = process.env.SMTP_FROM || 'NeovisionVE <no-reply@neovisionve.local>';
   }
 
-  const mailOptions = { from, to: toEmail, subject, text, html };
-  if (fromEmail) mailOptions.replyTo = fromUsername + ' <' + fromEmail + '>';
+  const mailOptions = { from, to: safeToEmail, subject, text, html };
+  if (fromEmail) mailOptions.replyTo = fromUsername + ' <' + validateEmailAddress(fromEmail) + '>';
 
   await transporter.sendMail(mailOptions);
   return { delivered: true, mode: cfg.mode };
 }
 
 async function sendTestEmail(toEmail, cfg) {
+  // Validate before touching nodemailer — blocks both CVEs at our layer
+  const safeToEmail = validateEmailAddress(toEmail);
+
   const transporter = buildTransporter(cfg);
   if (!transporter) throw new Error('No SMTP transporter available for this configuration');
 
   await transporter.sendMail({
     from:    cfg.from_address || process.env.SMTP_FROM || 'NeovisionVE <no-reply@neovisionve.local>',
-    to:      toEmail,
+    to:      safeToEmail,
     subject: 'NeovisionVE \u2014 SMTP test email',
     text:    'This is a test email from your NeovisionVE instance.\n\nIf you received this, your SMTP configuration is working correctly.',
     html:    '<div style="font-family:system-ui,sans-serif;padding:24px;background:#2A363B;color:#E8DCC8;border-radius:10px;max-width:480px;"><div style="font-size:18px;font-weight:700;color:#FF847C;margin-bottom:12px;">\uD83D\uDD12 NeovisionVE SMTP Test</div><p style="margin:0;font-size:14px;line-height:1.6;">This is a test email from your NeovisionVE instance.<br/><br/>If you received this, your SMTP configuration is working correctly. \u2713</p></div>',
@@ -164,4 +239,4 @@ function getSmtpStatus() {
   };
 }
 
-module.exports = { sendShareInvite, sendTestEmail, getSmtpStatus };
+module.exports = { sendShareInvite, sendTestEmail, getSmtpStatus, validateEmailAddress };

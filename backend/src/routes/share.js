@@ -5,7 +5,7 @@ const crypto = require('crypto');
 const { getDb } = require('../models/db');
 const { requireAuth, requireAuthWithKey } = require('../middleware/auth');
 const { encryptNote, decryptNote, encryptBookmark, decryptBookmark, encrypt, decrypt } = require('../utils/crypto');
-const { sendShareInvite } = require('../utils/mailer');
+const { sendShareInvite, validateEmailAddress } = require('../utils/mailer');
 
 const router = express.Router();
 
@@ -69,6 +69,12 @@ router.post('/', requireAuthWithKey, async (req, res) => {
   if (!parsed.success) return res.status(400).json({ error: 'Validation failed', details: parsed.error.flatten() });
 
   const { item_type, item_id, recipient_email, message } = parsed.data;
+
+  // Second validation layer — blocks nodemailer CVEs (group DoS + quoted @ misrouting)
+  // even if Zod's .email() lets a malicious address through.
+  try { validateEmailAddress(recipient_email); }
+  catch (e) { return res.status(400).json({ error: 'Invalid recipient email address' }); }
+
   const db = getDb();
 
   try {
