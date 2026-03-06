@@ -1,0 +1,34 @@
+# Environment — contains secrets, NEVER commit this
+.env
+
+# Dependencies — installed by npm, not stored in git
+node_modules/
+*/node_modules/
+
+# Build output — generated at build time
+frontend/dist/
+frontend/build/
+
+# Docker volumes and local data
+data/
+*.db
+*.db-shm
+*.db-wal
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+npm-debug.log*
+
+# Test coverage
+coverage/
